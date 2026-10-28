@@ -456,6 +456,7 @@ class FootballScoreboardCard extends HTMLElement {
 
   connectedCallback() {
     this._tickClock();
+    if (this._scrollToToday) requestAnimationFrame(() => this._render()); // drawn before it was on the page
     this._refresh();
     // Fit as many whole day columns as the card's own width allows (one on a phone)
     if (!window.ResizeObserver) return;
@@ -632,22 +633,47 @@ class FootballScoreboardCard extends HTMLElement {
     const cols = this.shadowRoot.querySelector('.cols');
     if (!cols) { this._bind(); return; }
     if (this._colsScroll != null) { this._keepScroll = this._colsScroll; this._colsScroll = null; }
-    if (this._scrollToToday) {
-      // Today as the right-most day on screen, so the days just played are beside it
-      const t = this._cols.findIndex(c => dayKey(c.day) === this._todayKey);
-      cols.scrollLeft = Math.max(0, t - this._vis + 1) * this._colStep(cols);
+    // Jumps wait until the card is on screen and its columns have a width
+    const step = this._colStep(cols);
+    if (this._scrollToToday && step) {
+      this._setScroll(cols, this._todayCol() * step);
       this._scrollToToday = false;
-    } else if (this._scrollToDay != null) { cols.scrollLeft = this._scrollToDay * this._colStep(cols); this._scrollToDay = null; }
-    else if (this._keepScroll != null) { cols.scrollLeft = this._keepScroll; this._keepScroll = null; }
-    else if (scrollLeft != null) cols.scrollLeft = scrollLeft;
+    } else if (this._scrollToDay != null && step) { this._setScroll(cols, this._scrollToDay * step); this._scrollToDay = null; }
+    else if (this._keepScroll != null) { this._setScroll(cols, this._keepScroll); this._keepScroll = null; }
+    else if (scrollLeft) this._setScroll(cols, scrollLeft);
     this._markChips();
     this._bind();
   }
 
-  /** Width of one day column plus the gap after it. */
+  /**
+   * The first column to show so today is the left-most day on screen (late in
+   * the week, as far right as the week goes). Sunday when today isn't in this week.
+   */
+  _todayCol() {
+    const t = this._cols.findIndex(c => dayKey(c.day) === this._todayKey);
+    return t < 0 ? 0 : Math.min(t, WEEK - this._vis);
+  }
+
+  /** Width of one day column plus the gap after it (0 until the card is laid out). */
   _colStep(cols) {
-    const first = cols.querySelector('.col');
-    return first ? first.getBoundingClientRect().width + (parseFloat(getComputedStyle(cols).columnGap) || 0) : 0;
+    const w = cols.querySelector('.col')?.getBoundingClientRect().width;
+    return w ? w + (parseFloat(getComputedStyle(cols).columnGap) || 0) : 0;
+  }
+
+  /**
+   * Scroll a freshly drawn strip. Snapping is off while it's set, and the
+   * position is set again a frame later: Safari otherwise re-snaps a new strip
+   * back to its first day as the logos load.
+   */
+  _setScroll(cols, left) {
+    cols.style.scrollSnapType = 'none';
+    cols.scrollLeft = left;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!cols.isConnected || this._sliding) return;
+      cols.scrollLeft = left;
+      cols.style.scrollSnapType = '';
+      this._markChips();
+    }));
   }
 
   /** Sun–Sat buttons that jump to a day, shown when the week doesn't fit across. */
@@ -788,14 +814,10 @@ class FootballScoreboardCard extends HTMLElement {
     if (this._sliding) return;
     const strip = this.shadowRoot.querySelector('.cols');
     const newStart = addDays(this._start, dir * WEEK);
-    const landOn = () => {
-      const t = this._cols.findIndex(c => dayKey(c.day) === this._todayKey);
-      return t < 0 ? 0 : Math.max(0, t - this._vis + 1);
-    };
     if (!strip?.querySelector('.col') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       this._start = newStart;
       this._buildCols();
-      this._scrollToDay = landOn();
+      this._scrollToDay = this._todayCol();
       this._setWeek(newStart);
       return;
     }
@@ -803,7 +825,7 @@ class FootballScoreboardCard extends HTMLElement {
     const old = this._cols;
     this._start = newStart;
     this._buildCols();
-    const land = landOn();
+    const land = this._todayCol();
     const cols = dir > 0 ? [...old, ...this._cols] : [...this._cols, ...old];
     const start = strip.scrollLeft;
     strip.classList.add('sliding');
