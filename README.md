@@ -30,6 +30,9 @@ browser.
   - Team stats side by side once the game has started, with the better number
     highlighted.
   - Passing, rushing and receiving leaders.
+  - Tap the **Team stats** or **Leaders** heading to hide that section in every
+    day column, and tap it again to bring it back. The browser remembers your
+    choice.
   - The top 3 teams in each team's division.
   - Before kickoff: venue, TV and (optionally) the betting line.
 - **Team view.** Tap a team logo to see:

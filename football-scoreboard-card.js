@@ -326,6 +326,12 @@ const STYLE = `
 
   /* tables */
   h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--secondary-text-color); }
+  .fold { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 8px; margin: 0 0 6px; cursor: pointer;
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--secondary-text-color); }
+  .fold .hint { font-weight: 400; letter-spacing: 0; text-transform: none; opacity: .75; }
+  .fold.closed { margin: 0; }
+  .fold.closed::after { content: ''; flex: 1; border-top: 1px solid var(--divider-color); }
+  .fold:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; border-radius: 4px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   .lines th, .lines td { padding: 4px 3px; text-align: center; font-size: 13px; }
   .lines th { font-size: 11px; font-weight: 500; color: var(--secondary-text-color); }
@@ -423,6 +429,7 @@ const visFor = (width, days = 'auto') => {
   return width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(WEEK, fitCols(width, MIN_COL_PX)));
 };
 const weekStart = d => addDays(startOfDay(d), -d.getDay()); // Sunday
+const FOLD_KEY = 'football-scoreboard-card:folded';
 const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 class FootballScoreboardCard extends HTMLElement {
@@ -438,6 +445,8 @@ class FootballScoreboardCard extends HTMLElement {
     this._loading = true;
     this._updated = null;
     this._scrollToToday = true;
+    // Sections the viewer has folded, remembered on this device
+    try { this._folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY)) || []); } catch { this._folded = new Set(); }
     this._width = window.innerWidth;       // refined by the ResizeObserver once laid out
     this._vis = visFor(this._width);
     this._buildCols();
@@ -778,7 +787,8 @@ class FootballScoreboardCard extends HTMLElement {
       }
       return `<tr><td class="${ab}">${esc(a ?? '–')}</td><td class="lbl">${esc(label)}</td><td class="${hb}">${esc(h ?? '–')}</td></tr>`;
     }).join('');
-    if (rows) html += `<div><h4>Team stats</h4><table class="stats"><tr class="head"><td>${esc(g.away.abbr)}</td><td></td><td>${esc(g.home.abbr)}</td></tr>${rows}</table></div>`;
+    if (rows) html += this._foldHTML('stats', 'Team stats',
+      `<table class="stats"><tr class="head"><td>${esc(g.away.abbr)}</td><td></td><td>${esc(g.home.abbr)}</td></tr>${rows}</table>`);
 
     // Leaders
     const leaders = id => data.leaders?.find(t => t.team?.id === id)?.leaders ?? [];
@@ -789,8 +799,15 @@ class FootballScoreboardCard extends HTMLElement {
     };
     const lrows = LEADER_ROWS.filter(([n]) => al.some(l => l.name === n) || hl.some(l => l.name === n))
       .map(([n, label]) => `<tr><td>${cell(al, n)}</td><td class="lbl">${label}</td><td>${cell(hl, n)}</td></tr>`).join('');
-    if (lrows) html += `<div><h4>Leaders</h4><table class="stats leaders">${lrows}</table></div>`;
+    if (lrows) html += this._foldHTML('leaders', 'Leaders', `<table class="stats leaders">${lrows}</table>`);
     return html;
+  }
+
+  /** A section whose heading hides / shows it. Folding applies to that section in every day column. */
+  _foldHTML(key, title, body) {
+    const closed = this._folded.has(key);
+    return `<div><button class="fold${closed ? ' closed' : ''}" data-fold="${key}" aria-expanded="${!closed}">
+      ${esc(title)} <span class="hint">(tap to ${closed ? 'expand' : 'hide'})</span></button>${closed ? '' : body}</div>`;
   }
 
   _divisionsHTML(g) {
@@ -938,6 +955,12 @@ class FootballScoreboardCard extends HTMLElement {
       strip.scrollTo({ left: i * step, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }));
     $('back')?.addEventListener('click', () => this._closeTeam());
+    this.shadowRoot.querySelectorAll('[data-fold]').forEach(el => el.addEventListener('click', () => {
+      const k = el.dataset.fold;
+      if (!this._folded.delete(k)) this._folded.add(k);
+      try { localStorage.setItem(FOLD_KEY, JSON.stringify([...this._folded])); } catch { /* not remembered */ }
+      this._render();
+    }));
     this.shadowRoot.querySelectorAll('[data-team]').forEach(el =>
       el.addEventListener('click', () => this._openTeam(el.dataset.team)));
     $('refresh')?.addEventListener('click', () => { this._cols.forEach(c => { c.summary = null; }); this._refresh(); });
