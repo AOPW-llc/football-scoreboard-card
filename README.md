@@ -18,8 +18,9 @@ browser.
 - **A week per screen.** The arrows move a week back or forward with a sliding
   carousel. Within the week, swipe or scroll through the days, or tap a day
   button (S M T W T F S) to jump to it.
-- **Fits the screen.** The card shows as many whole days as fit across it, so
-  no column is cut off. On a phone that's one day at a time.
+- **Fits the screen.** By default the card shows as many whole days as fit
+  across it, so no column is cut off. On a phone that's one day at a time. Or
+  choose how many days to show (1–7).
 - **Game dropdown per day.**
   - Started or finished: `Dallas (38) - Philadelphia (21) Final` or
     `Dallas (14) - Philadelphia (10) 7:42/3rd`
@@ -69,6 +70,7 @@ be set in the visual editor. The card works best full width, for example in a
 ```yaml
 type: custom:football-scoreboard-card
 team: DAL
+days: auto
 refresh_interval: 30
 show_odds: true
 ```
@@ -76,8 +78,24 @@ show_odds: true
 | Option | Default | Description |
 |---|---|---|
 | `team` | none | Favorite team's abbreviation (e.g. `DAL`, `GB`, `KC`). Its game is selected automatically on the days it plays. |
+| `days` | `auto` | How many days of the Sunday–Saturday week show at once (`auto` or `1`–`7`). The rest of the week is a swipe or scroll away, and the arrows always move a whole week. See below. |
 | `refresh_interval` | `30` | Seconds between refreshes while a game is live (10–300). |
 | `show_odds` | `true` | Show the betting line before kickoff. |
+
+### Days on screen
+
+The card always works in Sunday–Saturday weeks. `days` only sets how many of
+that week's days are on screen together:
+
+- **`auto`:** as many columns at least 300px wide as fit. One day below 600px
+  wide (phones), and up to the whole week on a wide screen.
+- **`1`–`7`:** that many days. `7` shows the whole week with nothing to swipe.
+  If the card is too narrow for that many readable columns (about 220px each),
+  it shows as many as fit and the rest scroll.
+
+The card measures its own width, not the device's, so the result also depends
+on the dashboard layout. A **Panel** view gives the card the full width.
+Masonry columns are narrow and usually leave room for only one day.
 
 ## Stats shown
 

@@ -7,7 +7,7 @@
  * calendar day, so a late game belongs to the evening it kicks off.
  */
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CARD_TAG = 'football-scoreboard-card';
 
 const API = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
@@ -406,11 +406,22 @@ const STYLE = `
 `;
 
 const WEEK = 7;
-const MIN_COL_PX = 300;           // a day column is never narrower than this
-const SINGLE_DAY_BELOW_PX = 600;  // narrower than this (phones): one day at a time
+const MIN_COL_PX = 300;           // Auto: a day column is never narrower than this
+const MIN_FIXED_COL_PX = 220;     // a chosen day count shrinks columns to this at most, then scrolls
+const SINGLE_DAY_BELOW_PX = 600;  // Auto, narrower than this (phones): one day at a time
 const SLIDE_MS = 500;
-/** How many whole day columns fit across the card. */
-const visFor = width => (!width ? WEEK : width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(WEEK, Math.floor((width - 32 + 12) / (MIN_COL_PX + 12)))));
+const fitCols = (width, min) => Math.floor((width - 32 + 12) / (min + 12));
+/**
+ * How many of the week's days are on screen at once. `days` is the config
+ * choice: 'auto' fits as many whole columns as the width allows (one on a
+ * phone); 1–7 shows that many, unless the columns would get unreadably narrow.
+ */
+const visFor = (width, days = 'auto') => {
+  const n = Number(days);
+  if (n >= 1 && n <= WEEK) return width ? Math.max(1, Math.min(n, fitCols(width, MIN_FIXED_COL_PX))) : n;
+  if (!width) return WEEK;
+  return width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(WEEK, fitCols(width, MIN_COL_PX)));
+};
 const weekStart = d => addDays(startOfDay(d), -d.getDay()); // Sunday
 const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -427,13 +438,16 @@ class FootballScoreboardCard extends HTMLElement {
     this._loading = true;
     this._updated = null;
     this._scrollToToday = true;
-    this._vis = visFor(window.innerWidth); // refined by the ResizeObserver once laid out
+    this._width = window.innerWidth;       // refined by the ResizeObserver once laid out
+    this._vis = visFor(this._width);
     this._buildCols();
   }
 
   setConfig(config) {
-    this._config = { refresh_interval: 30, show_odds: true, ...config };
+    this._config = { refresh_interval: 30, show_odds: true, days: 'auto', ...config };
     if (this._config.team) this._config.team = String(this._config.team).toUpperCase();
+    const vis = visFor(this._width, this._config.days);
+    if (vis !== this._vis) { this._vis = vis; this._scrollToToday = this._showingThisWeek; }
     if (this.isConnected) this._refresh();
     this._render();
   }
@@ -446,8 +460,10 @@ class FootballScoreboardCard extends HTMLElement {
     // Fit as many whole day columns as the card's own width allows (one on a phone)
     if (!window.ResizeObserver) return;
     this._resizeObs ??= new ResizeObserver(([entry]) => {
-      const vis = visFor(entry.contentRect.width);
-      if (!entry.contentRect.width || vis === this._vis || this._sliding) return;
+      if (!entry.contentRect.width) return;
+      this._width = entry.contentRect.width;
+      const vis = visFor(this._width, this._config?.days);
+      if (vis === this._vis || this._sliding) return;
       this._vis = vis;
       this._scrollToToday = this._showingThisWeek;
       this._render();
@@ -468,11 +484,16 @@ class FootballScoreboardCard extends HTMLElement {
     return {
       schema: [
         { name: 'team', selector: { select: { mode: 'dropdown', options: [{ value: '', label: 'None' }, ...TEAMS.map(([v, l]) => ({ value: v, label: l }))] } } },
+        { name: 'days', selector: { select: { mode: 'dropdown', options: [{ value: 'auto', label: 'Auto (as many as fit)' },
+          ...Array.from({ length: WEEK }, (_, i) => ({ value: String(i + 1), label: i + 1 === WEEK ? '7 (whole week)' : String(i + 1) }))] } } },
         { name: 'refresh_interval', selector: { number: { min: 10, max: 300, step: 5, mode: 'box', unit_of_measurement: 's' } } },
         { name: 'show_odds', selector: { boolean: {} } },
       ],
-      computeLabel: s => ({ team: 'Favorite team', refresh_interval: 'Refresh during live games', show_odds: 'Show betting line before kickoff' }[s.name]),
-      computeHelper: s => (s.name === 'team' ? "Selected automatically on days they play" : undefined),
+      computeLabel: s => ({ team: 'Favorite team', days: 'Days on screen', refresh_interval: 'Refresh during live games', show_odds: 'Show betting line before kickoff' }[s.name]),
+      computeHelper: s => ({
+        team: 'Selected automatically on days they play',
+        days: 'How many days of the Sunday–Saturday week show at once; swipe or scroll for the rest',
+      }[s.name]),
     };
   }
 
