@@ -3,8 +3,8 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![Validate](https://github.com/AOPW-llc/football-scoreboard-card/actions/workflows/validate.yml/badge.svg)](https://github.com/AOPW-llc/football-scoreboard-card/actions/workflows/validate.yml)
 
-A Home Assistant dashboard card for NFL scores. It shows a week at a time,
-Sunday to Saturday, with one column per day. Each column has a dropdown of that
+A Home Assistant dashboard card for NFL scores. It shows one NFL week at a
+time, following the league's own calendar, with one column per day. Each column has a dropdown of that
 day's games and shows the selected game's score, team stats, leaders and
 division standings. Tap a team logo for that team's season stats against the
 league leaders and the full AFC / NFC standings.
@@ -15,12 +15,15 @@ browser.
 
 ## Features
 
-- **A week per screen.** The arrows move a week back or forward with a sliding
+- **NFL weeks.** Each screen is one week of the league calendar (Week 8,
+  Preseason Week 2, Wild Card, … Super Bowl), named in the header. The weeks
+  come from the schedule rather than being calculated, so Thanksgiving,
+  Christmas and playoff games land in the right week, and longer weeks (Week 1,
+  Super Bowl week) show every day. In the offseason the card shows plain 7-day
+  blocks.
+- **Carousel.** The arrows move a week back or forward with a sliding
   carousel. Within the week, swipe or scroll through the days, or tap a day
   button (S M T W T F S) to jump to it.
-- **NFL week.** The header names the week: Week 7, Preseason Week 2, Wild
-  Card, … Super Bowl. NFL weeks run Thursday to Monday, so each Sunday–Saturday
-  view is named for its Sunday games.
 - **Fits the screen.** By default the card shows as many whole days as fit
   across it, so no column is cut off. On a phone that's one day at a time. Or
   choose how many days to show (1–7).
@@ -84,18 +87,19 @@ show_odds: true
 | Option | Default | Description |
 |---|---|---|
 | `team` | none | Favorite team's abbreviation (e.g. `DAL`, `GB`, `KC`). Its game is selected automatically on the days it plays. |
-| `days` | `auto` | How many days of the Sunday–Saturday week show at once (`auto` or `1`–`7`). The rest of the week is a swipe or scroll away, and the arrows always move a whole week. See below. |
+| `days` | `auto` | How many days of the week show at once (`auto` or `1`–`7`). The rest of the week is a swipe or scroll away, and the arrows always move a whole week. See below. |
 | `refresh_interval` | `30` | Seconds between refreshes while a game is live (10–300). |
 | `show_odds` | `true` | Show the betting line before kickoff. |
 
 ### Days on screen
 
-The card always works in Sunday–Saturday weeks. `days` only sets how many of
-that week's days are on screen together:
+The card always works in NFL weeks. `days` only sets how many of that week's
+days are on screen together:
 
 - **`auto`:** as many columns at least 300px wide as fit. One day below 600px
   wide (phones), and up to the whole week on a wide screen.
-- **`1`–`7`:** that many days. `7` shows the whole week with nothing to swipe.
+- **`1`–`7`:** that many days. `7` shows a normal week with nothing to swipe.
+  Longer weeks (Week 1, Super Bowl week) still scroll.
   If the card is too narrow for that many readable columns (about 220px each),
   it shows as many as fit and the rest scroll.
 

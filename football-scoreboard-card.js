@@ -7,7 +7,7 @@
  * calendar day, so a late game belongs to the evening it kicks off.
  */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CARD_TAG = 'football-scoreboard-card';
 
 const API = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
@@ -116,8 +116,6 @@ function parseGame(ev) {
   const odds = comp.odds?.[0];
   return {
     id: ev.id,
-    week: ev.week?.number ?? null,
-    seasonType: ev.season?.slug ?? '',     // preseason | regular-season | post-season
     date: new Date(comp.date ?? ev.date),
     timeValid: comp.timeValid !== false,
     state: type.state ?? 'pre',           // pre | in | post
@@ -273,8 +271,9 @@ const STYLE = `
   .wkn { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .wk { font-size: 15px; font-weight: 600; color: var(--secondary-text-color); white-space: nowrap; }
   .wkn + .wk { font-size: 12px; font-weight: 500; }
-  .chips { display: flex; justify-content: center; gap: 4px; padding: 2px 12px 0; }
-  .chip { font: inherit; display: flex; flex-direction: column; align-items: center; min-width: 36px; padding: 3px 4px;
+  .chips { display: flex; justify-content: safe center; gap: 4px; padding: 2px 12px 0; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { font: inherit; flex: none; display: flex; flex-direction: column; align-items: center; min-width: 36px; padding: 3px 4px;
     border-radius: 10px; border: 1px solid transparent; background: none; color: var(--primary-text-color); cursor: pointer; line-height: 1.15; }
   .chip .l { font-size: 11px; color: var(--secondary-text-color); }
   .chip .d { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -416,7 +415,8 @@ const STYLE = `
   }
 `;
 
-const WEEK = 7;
+const BLOCK_DAYS = 7;              // offseason "weeks", and the fallback when the calendar can't load
+const DAY_MS = 864e5;
 const MIN_COL_PX = 300;           // Auto: a day column is never narrower than this
 const MIN_FIXED_COL_PX = 220;     // a chosen day count shrinks columns to this at most, then scrolls
 const SINGLE_DAY_BELOW_PX = 600;  // Auto, narrower than this (phones): one day at a time
@@ -427,29 +427,44 @@ const fitCols = (width, min) => Math.floor((width - 32 + 12) / (min + 12));
  * choice: 'auto' fits as many whole columns as the width allows (one on a
  * phone); 1–7 shows that many, unless the columns would get unreadably narrow.
  */
-const visFor = (width, days = 'auto') => {
-  const n = Number(days);
-  if (n >= 1 && n <= WEEK) return width ? Math.max(1, Math.min(n, fitCols(width, MIN_FIXED_COL_PX))) : n;
-  if (!width) return WEEK;
-  return width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(WEEK, fitCols(width, MIN_COL_PX)));
+const visFor = (width, days = 'auto', weekDays = BLOCK_DAYS) => {
+  const n = Math.min(Number(days), weekDays);
+  if (n >= 1) return width ? Math.max(1, Math.min(n, fitCols(width, MIN_FIXED_COL_PX))) : n;
+  if (!width) return weekDays;
+  return width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(weekDays, fitCols(width, MIN_COL_PX)));
 };
-const weekStart = d => addDays(startOfDay(d), -d.getDay()); // Sunday
-const POSTSEASON_WEEKS = { 1: 'Wild Card', 2: 'Divisional Round', 3: 'Conference Championships', 4: 'Pro Bowl', 5: 'Super Bowl' };
-/** "Week 7", "Preseason Week 2", "Wild Card"… for a game's NFL week. */
-const weekLabel = g => {
-  if (!g?.week) return '';
-  if (g.seasonType === 'post-season') return POSTSEASON_WEEKS[g.week] ?? `Postseason Week ${g.week}`;
-  return `${g.seasonType === 'preseason' ? 'Preseason ' : ''}Week ${g.week}`;
+/** The calendar day (Eastern) of an ESPN calendar boundary, as a local date. Boundaries fall at 3 AM Eastern. */
+const etDay = iso => { const d = new Date(Date.parse(iso) - 5 * 3600e3); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
+/**
+ * One season of the league's week calendar from a scoreboard response:
+ * weeks [{ start, days, label }] (lengths vary: Week 1, the last preseason
+ * week and Super Bowl week run long) and the offseason that follows.
+ */
+const parseCalendar = league => {
+  const weeks = [];
+  let off = null;
+  for (const part of league?.calendar ?? []) {
+    if (/off/i.test(part.label ?? '')) { off = { start: etDay(part.startDate), end: etDay(part.endDate) }; continue; }
+    for (const e of part.entries ?? []) {
+      const days = Math.round((Date.parse(e.endDate) - Date.parse(e.startDate)) / DAY_MS);
+      if (days > 0) weeks.push({ start: etDay(e.startDate), days, label: e.label ?? '' });
+    }
+  }
+  return { weeks, off };
 };
+/** A Wednesday–Tuesday block, the usual shape of an NFL week, for when the calendar can't load. */
+const fallbackWeek = d => ({ start: addDays(startOfDay(d), -((d.getDay() + 4) % 7)), days: BLOCK_DAYS, label: '' });
 const FOLD_KEY = 'football-scoreboard-card:folded';
-const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']; // by getDay()
 
 class FootballScoreboardCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._start = weekStart(new Date());  // Sunday of the week on screen
+    this._seasons = [];                   // parsed league calendars, one per season
     this._todayKey = dayKey(new Date());
+    this._week = fallbackWeek(new Date()); // replaced by the real NFL week on the first refresh
+    this._start = this._week.start;
     this._cols = [];                      // [{ day, games, selId, summary }]
     this._standings = null;
     this._standingsAt = 0;
@@ -460,14 +475,14 @@ class FootballScoreboardCard extends HTMLElement {
     // Sections the viewer has folded, remembered on this device
     try { this._folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY)) || []); } catch { this._folded = new Set(); }
     this._width = window.innerWidth;       // refined by the ResizeObserver once laid out
-    this._vis = visFor(this._width);
+    this._vis = visFor(this._width, 'auto', this._week.days);
     this._buildCols();
   }
 
   setConfig(config) {
     this._config = { refresh_interval: 30, show_odds: true, days: 'auto', ...config };
     if (this._config.team) this._config.team = String(this._config.team).toUpperCase();
-    const vis = visFor(this._width, this._config.days);
+    const vis = visFor(this._width, this._config.days, this._week.days);
     if (vis !== this._vis) { this._vis = vis; this._scrollToToday = this._showingThisWeek; }
     if (this.isConnected) this._refresh();
     this._render();
@@ -484,7 +499,7 @@ class FootballScoreboardCard extends HTMLElement {
     this._resizeObs ??= new ResizeObserver(([entry]) => {
       if (!entry.contentRect.width) return;
       this._width = entry.contentRect.width;
-      const vis = visFor(this._width, this._config?.days);
+      const vis = visFor(this._width, this._config?.days, this._week.days);
       if (vis === this._vis || this._sliding) return;
       this._vis = vis;
       this._scrollToToday = this._showingThisWeek;
@@ -507,14 +522,14 @@ class FootballScoreboardCard extends HTMLElement {
       schema: [
         { name: 'team', selector: { select: { mode: 'dropdown', options: [{ value: '', label: 'None' }, ...TEAMS.map(([v, l]) => ({ value: v, label: l }))] } } },
         { name: 'days', selector: { select: { mode: 'dropdown', options: [{ value: 'auto', label: 'Auto (as many as fit)' },
-          ...Array.from({ length: WEEK }, (_, i) => ({ value: String(i + 1), label: i + 1 === WEEK ? '7 (whole week)' : String(i + 1) }))] } } },
+          ...Array.from({ length: 7 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))] } } },
         { name: 'refresh_interval', selector: { number: { min: 10, max: 300, step: 5, mode: 'box', unit_of_measurement: 's' } } },
         { name: 'show_odds', selector: { boolean: {} } },
       ],
       computeLabel: s => ({ team: 'Favorite team', days: 'Days on screen', refresh_interval: 'Refresh during live games', show_odds: 'Show betting line before kickoff' }[s.name]),
       computeHelper: s => ({
         team: 'Selected automatically on days they play',
-        days: 'How many days of the Sunday–Saturday week show at once; swipe or scroll for the rest',
+        days: 'How many days of the NFL week show at once; swipe or scroll for the rest',
       }[s.name]),
     };
   }
@@ -525,18 +540,59 @@ class FootballScoreboardCard extends HTMLElement {
 
   _buildCols() {
     const prev = new Map(this._cols.map(c => [dayKey(c.day), c]));
-    this._cols = Array.from({ length: WEEK }, (_, i) => {
+    this._cols = Array.from({ length: this._week.days }, (_, i) => {
       const day = addDays(this._start, i);
       return prev.get(dayKey(day)) ?? { day, games: [], selId: null, summary: null };
     });
   }
 
-  _setWeek(start) {
-    this._start = start;
+  /** Make `week` the one on screen (columns only; _setWeek also draws and loads it). */
+  _useWeek(week) {
+    this._week = week;
+    this._start = week.start;
+    this._vis = visFor(this._width, this._config?.days, week.days);
     this._buildCols();
+  }
+
+  _setWeek(week) {
+    this._useWeek(week);
     this._loading = true;
     this._render();
     this._refresh();
+  }
+
+  /** The league's week holding `d`, from a calendar already loaded (or an offseason block); null if unknown. */
+  _findWeek(d) {
+    for (const s of this._seasons) {
+      const w = s.weeks.find(x => d >= x.start && d < addDays(x.start, x.days));
+      if (w) return w;
+    }
+    for (const { off } of this._seasons) {
+      if (!off || d < off.start || d >= off.end) continue;
+      // No NFL weeks between the Super Bowl and the preseason: plain blocks from the end of the season
+      const start = addDays(off.start, BLOCK_DAYS * Math.floor(Math.round((d - off.start) / DAY_MS) / BLOCK_DAYS));
+      return { start, days: Math.min(BLOCK_DAYS, Math.round((off.end - start) / DAY_MS)), label: 'Offseason' };
+    }
+    return null;
+  }
+
+  /** The league's week holding `day`, loading that season's calendar if needed. Never fails. */
+  async _weekFor(day) {
+    day = startOfDay(day);
+    let w = this._findWeek(day);
+    if (!w) {
+      try {
+        const j = await getJSON(`${API}/scoreboard?dates=${ymd(day)}`);
+        this._seasons.push(parseCalendar(j.leagues?.[0]));
+        w = this._findWeek(day);
+      } catch { /* fall back below */ }
+    }
+    return w ?? fallbackWeek(day);
+  }
+
+  async _goToday() {
+    this._scrollToToday = true;
+    this._setWeek(await this._weekFor(new Date()));
   }
 
   get _showingThisWeek() { return this._cols.some(c => dayKey(c.day) === this._todayKey); }
@@ -546,13 +602,13 @@ class FootballScoreboardCard extends HTMLElement {
     const now = new Date();
     const el = this.shadowRoot.getElementById('clock');
     if (el) el.textContent = fmtTime(now);
-    // At midnight, follow today (into the next week on Sunday) if this week is what's on screen
+    // At midnight, follow today (into the next NFL week) if this week is what's on screen
     const key = dayKey(now);
     if (key !== this._todayKey) {
       const wasThisWeek = this._showingThisWeek;
       this._todayKey = key;
       this._scrollToToday = wasThisWeek;
-      if (wasThisWeek && dayKey(weekStart(now)) !== dayKey(this._start)) this._setWeek(weekStart(now)); else this._render();
+      if (wasThisWeek && !this._showingThisWeek) this._goToday(); else this._render();
     }
     this._clockTimer = setTimeout(() => this._tickClock(), 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
   }
@@ -561,12 +617,23 @@ class FootballScoreboardCard extends HTMLElement {
 
   async _refresh() {
     clearTimeout(this._timer);
+    if (!this._calendarReady) {
+      // First load: swap the placeholder week for the league's real one
+      const w = await this._weekFor(new Date());
+      if (!this._calendarReady) {
+        this._calendarReady = true;
+        if (dayKey(w.start) !== dayKey(this._start) || w.days !== this._week.days || w.label !== this._week.label) {
+          this._useWeek(w);
+          this._scrollToToday = true;
+        }
+      }
+    }
     const start = this._start;
     const cols = this._cols;
     try {
       const standingsDue = Date.now() - this._standingsAt > STANDINGS_REFRESH_S * 1000;
       // ESPN buckets games by US Eastern date; one extra date each side covers every local time zone
-      const dates = Array.from({ length: WEEK + 2 }, (_, i) => addDays(start, i - 1));
+      const dates = Array.from({ length: cols.length + 2 }, (_, i) => addDays(start, i - 1));
       const [events, st] = await Promise.all([
         getEvents(dates),
         standingsDue ? getJSON(STANDINGS_API).catch(() => null) : null,
@@ -633,21 +700,21 @@ class FootballScoreboardCard extends HTMLElement {
     const single = this._vis === 1;
     const tv = this._teamView;
     if (tv && scroller) this._colsScroll = scrollLeft; // come back to the same place
-    const sat = addDays(this._start, WEEK - 1);
+    const last = addDays(this._start, this._cols.length - 1);
     const md = d => `${d.getMonth() + 1}/${d.getDate()}`;
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card>
       <div class="top${single ? ' single-top' : ''}">
         <div class="range">${tv ? '<button class="back" id="back">‹ Back</button>' : `
           <button class="nav" id="left" aria-label="Previous week" title="Previous week">‹</button>
           <button class="nav" id="right" aria-label="Next week" title="Next week">›</button>
-          <div class="wkt">${this._weekName ? `<span class="wkn">${esc(this._weekName)}</span>` : ''}${single ? '' : `<span class="wk">${md(this._start)} – ${md(sat)}</span>`}</div>
+          <div class="wkt">${this._week.label ? `<span class="wkn">${esc(this._week.label)}</span>` : ''}${single ? '' : `<span class="wk">${md(this._start)} – ${md(last)}</span>`}</div>
           ${this._showingThisWeek ? '' : `<button class="today" id="today">${single ? 'Today' : 'This week'}</button>`}`}
         </div>
         <div class="clock" id="clock">${fmtTime(new Date())}</div>
         <button class="refresh" id="refresh" title="Refresh now">↻</button>
       </div>
       ${this._error ? `<div class="err">${esc(this._error)}</div>` : ''}
-      ${tv ? this._teamViewHTML(tv) : `${this._vis < WEEK ? this._chipsHTML() : ''}
+      ${tv ? this._teamViewHTML(tv) : `${this._vis < this._cols.length ? this._chipsHTML() : ''}
       <div class="cols${single ? ' single' : ''}" style="--vis:${this._vis}">${this._cols.map((c, i) => this._colHTML(c, i)).join('')}</div>`}
       ${this._updated ? `<div class="foot">Updated ${fmtTime(this._updated)}</div>` : ''}
     </ha-card>`;
@@ -668,20 +735,11 @@ class FootballScoreboardCard extends HTMLElement {
 
   /**
    * The first column to show so today is the left-most day on screen (late in
-   * the week, as far right as the week goes). Sunday when today isn't in this week.
+   * the week, as far right as the week goes). The week's first day when today isn't in it.
    */
   _todayCol() {
     const t = this._cols.findIndex(c => dayKey(c.day) === this._todayKey);
-    return t < 0 ? 0 : Math.min(t, WEEK - this._vis);
-  }
-
-  /**
-   * The NFL week on screen. NFL weeks run Thursday–Monday, so a Sunday–Saturday
-   * week holds two of them; it's named for its Sunday games (else its first game).
-   */
-  get _weekName() {
-    const games = this._cols.flatMap(c => c.games);
-    return weekLabel(this._cols[0].games[0] ?? games[0]);
+    return t < 0 ? 0 : Math.min(t, this._cols.length - this._vis);
   }
 
   /** Width of one day column plus the gap after it (0 until the card is laid out). */
@@ -706,11 +764,11 @@ class FootballScoreboardCard extends HTMLElement {
     }));
   }
 
-  /** Sun–Sat buttons that jump to a day, shown when the week doesn't fit across. */
+  /** One button per day of the week that jumps to it, shown when the week doesn't fit across. */
   _chipsHTML() {
     return `<div class="chips">${this._cols.map((c, i) => `<button class="chip${c.games.length ? '' : ' none'}${dayKey(c.day) === this._todayKey ? ' today' : ''}"
       data-day="${i}" aria-label="${esc(c.day.toLocaleDateString('en-US', { weekday: 'long' }))} ${fmtDate(c.day)}">
-      <span class="l">${DOW_LETTERS[i]}</span><span class="d">${c.day.getDate()}</span></button>`).join('')}</div>`;
+      <span class="l">${DOW_LETTERS[c.day.getDay()]}</span><span class="d">${c.day.getDate()}</span></button>`).join('')}</div>`;
   }
 
   /** Highlight the chips of the days currently on screen. */
@@ -845,31 +903,35 @@ class FootballScoreboardCard extends HTMLElement {
 
   /**
    * Carousel move by one week. Lays this week and the next (or previous) one
-   * out as one strip, scrolls across it, then settles on the new week's Sunday
-   * (or today, when arriving at the current week).
+   * out as one strip, scrolls across it, then settles on the new week's first
+   * day (or today, when arriving at the current week). Weeks come from the
+   * league calendar, so they can differ in length.
    */
-  _slide(dir) {
-    if (this._sliding) return;
+  async _slide(dir) {
+    if (this._sliding || this._finding) return;
+    this._finding = true;
+    const week = await this._weekFor(dir > 0 ? addDays(this._start, this._cols.length) : addDays(this._start, -1));
+    this._finding = false;
     const strip = this.shadowRoot.querySelector('.cols');
-    const newStart = addDays(this._start, dir * WEEK);
+    if (this._sliding || this._teamView) return;
     if (!strip?.querySelector('.col') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      this._start = newStart;
-      this._buildCols();
+      this._useWeek(week);
       this._scrollToDay = this._todayCol();
-      this._setWeek(newStart);
+      this._setWeek(week);
       return;
     }
     const step = this._colStep(strip);
     const old = this._cols;
-    this._start = newStart;
-    this._buildCols();
+    this._useWeek(week);
     const land = this._todayCol();
     const cols = dir > 0 ? [...old, ...this._cols] : [...this._cols, ...old];
     const start = strip.scrollLeft;
     strip.classList.add('sliding');
     strip.innerHTML = cols.map(c => this._colHTML(c, -1)).join('');
-    const from = dir > 0 ? start : start + WEEK * step;
-    const to = dir > 0 ? (WEEK + land) * step : land * step;
+    const title = this.shadowRoot.querySelector('.wkn');
+    if (title) title.textContent = week.label; // the rest of the header catches up when the strip lands
+    const from = dir > 0 ? start : start + this._cols.length * step;
+    const to = dir > 0 ? (old.length + land) * step : land * step;
     strip.scrollLeft = from;
     this._sliding = true;
     this._loading = true;
@@ -964,15 +1026,15 @@ class FootballScoreboardCard extends HTMLElement {
 
   _bind() {
     const $ = id => this.shadowRoot.getElementById(id);
-    // Arrows move a whole week (Sun–Sat); within the week, swipe / scroll or tap a day chip
+    // Arrows move a whole NFL week; within the week, swipe / scroll or tap a day chip
     $('left')?.addEventListener('click', () => this._slide(-1));
     $('right')?.addEventListener('click', () => this._slide(1));
-    $('today')?.addEventListener('click', () => { this._scrollToToday = true; this._setWeek(weekStart(new Date())); });
+    $('today')?.addEventListener('click', () => this._goToday());
     const strip = this.shadowRoot.querySelector('.cols');
     strip?.addEventListener('scroll', () => this._markChips(), { passive: true });
     this.shadowRoot.querySelectorAll('.chip').forEach(ch => ch.addEventListener('click', () => {
       const step = this._colStep(strip);
-      const i = Math.min(Number(ch.dataset.day), WEEK - this._vis); // the last days share the final screen
+      const i = Math.min(Number(ch.dataset.day), this._cols.length - this._vis); // the last days share the final screen
       strip.scrollTo({ left: i * step, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }));
     $('back')?.addEventListener('click', () => this._closeTeam());
@@ -1005,7 +1067,7 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: CARD_TAG,
   name: 'Football Scoreboard Card',
-  description: 'A week of NFL scores (Sunday–Saturday) side by side, with team stats, leaders and division standings.',
+  description: 'NFL scores a week at a time, following the league calendar, with team stats, leaders and division standings.',
   preview: true,
   documentationURL: 'https://github.com/AOPW-llc/football-scoreboard-card',
 });
