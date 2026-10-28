@@ -7,7 +7,7 @@
  * calendar day, so a late game belongs to the evening it kicks off.
  */
 
-const VERSION = '1.2.1';
+const VERSION = '1.3.0';
 const CARD_TAG = 'football-scoreboard-card';
 
 const API = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
@@ -459,6 +459,8 @@ const parseCalendar = league => {
 };
 /** A Wednesday–Tuesday block, the usual shape of an NFL week, for when the calendar can't load. */
 const fallbackWeek = d => ({ start: addDays(startOfDay(d), -((d.getDay() + 4) % 7)), days: BLOCK_DAYS, label: '' });
+const VIEW_KEY = 'football-scoreboard-card:view';
+const parseDayKey = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
 const FOLD_KEY = 'football-scoreboard-card:folded';
 const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']; // by getDay()
 
@@ -479,6 +481,11 @@ class FootballScoreboardCard extends HTMLElement {
     this._scrollToToday = true;
     // Sections the viewer has folded, remembered on this device
     try { this._folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY)) || []); } catch { this._folded = new Set(); }
+    // Where the viewer left off (Home Assistant rebuilds the card on every visit). Only for this tab, and only today.
+    try {
+      const v = JSON.parse(sessionStorage.getItem(VIEW_KEY));
+      if (v?.day === this._todayKey && /^\d{4}-\d\d-\d\d$/.test(v.start)) this._restore = v;
+    } catch { /* start at today */ }
     this._width = window.innerWidth;       // refined by the ResizeObserver once laid out
     this._vis = visFor(this._width, 'auto', this._week.days);
     this._buildCols();
@@ -516,6 +523,7 @@ class FootballScoreboardCard extends HTMLElement {
   disconnectedCallback() {
     clearTimeout(this._clockTimer);
     clearTimeout(this._timer);
+    clearTimeout(this._saveTimer);
     this._resizeObs?.disconnect();
   }
 
@@ -623,13 +631,20 @@ class FootballScoreboardCard extends HTMLElement {
   async _refresh() {
     clearTimeout(this._timer);
     if (!this._calendarReady) {
-      // First load: swap the placeholder week for the league's real one
-      const w = await this._weekFor(new Date());
+      // First load: swap the placeholder week for the league's real one, or for where the viewer left off
+      const saved = this._restore;
+      this._restore = null;
+      const w = await this._weekFor(saved ? parseDayKey(saved.start) : new Date());
       if (!this._calendarReady) {
         this._calendarReady = true;
         if (dayKey(w.start) !== dayKey(this._start) || w.days !== this._week.days || w.label !== this._week.label) {
           this._useWeek(w);
           this._scrollToToday = true;
+        }
+        if (saved) {
+          this._scrollToToday = false;
+          this._scrollToDay = Math.max(0, Math.min(Number(saved.col) || 0, this._cols.length - this._vis));
+          if (saved.team) this._openTeam(String(saved.team), { restoring: true });
         }
       }
     }
@@ -724,7 +739,7 @@ class FootballScoreboardCard extends HTMLElement {
       ${this._updated ? `<div class="foot">Updated ${fmtTime(this._updated)}</div>` : ''}
     </ha-card>`;
     const cols = this.shadowRoot.querySelector('.cols');
-    if (!cols) { this._bind(); return; }
+    if (!cols) { this._bind(); this._saveView(); return; }
     if (this._colsScroll != null) { this._keepScroll = this._colsScroll; this._colsScroll = null; }
     // Jumps wait until the card is on screen and its columns have a width
     const step = this._colStep(cols);
@@ -736,6 +751,21 @@ class FootballScoreboardCard extends HTMLElement {
     else if (scrollLeft) this._setScroll(cols, scrollLeft);
     this._markChips();
     this._bind();
+    this._saveView();
+  }
+
+  /** Remember the week, the day scrolled to and any open team page, for when the card is rebuilt. */
+  _saveView() {
+    if (!this._calendarReady || this._sliding) return;
+    const cols = this.shadowRoot.querySelector('.cols');
+    const step = cols ? this._colStep(cols) : 0;
+    this._viewCol = this._scrollToDay ?? (this._scrollToToday ? this._todayCol()
+      : step ? Math.round(cols.scrollLeft / step) : this._viewCol ?? 0);
+    try {
+      sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+        day: this._todayKey, start: dayKey(this._start), col: this._viewCol, team: this._teamView ?? null,
+      }));
+    } catch { /* not remembered */ }
   }
 
   /**
@@ -956,10 +986,10 @@ class FootballScoreboardCard extends HTMLElement {
 
   /* ── team view ── */
 
-  async _openTeam(id) {
+  async _openTeam(id, { restoring = false } = {}) {
     this._teamView = id;
     this._render();
-    this.shadowRoot.querySelector('ha-card')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    if (!restoring) this.shadowRoot.querySelector('ha-card')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
     if (!this._teamStats || Date.now() - this._teamStatsAt > TEAM_STATS_REFRESH_S * 1000) {
       try {
         this._teamStats = parseTeamStats(await getJSON(TEAM_STATS_API));
@@ -1036,7 +1066,11 @@ class FootballScoreboardCard extends HTMLElement {
     $('right')?.addEventListener('click', () => this._slide(1));
     $('today')?.addEventListener('click', () => this._goToday());
     const strip = this.shadowRoot.querySelector('.cols');
-    strip?.addEventListener('scroll', () => this._markChips(), { passive: true });
+    strip?.addEventListener('scroll', () => {
+      this._markChips();
+      clearTimeout(this._saveTimer);
+      this._saveTimer = setTimeout(() => this._saveView(), 300); // once the swipe settles
+    }, { passive: true });
     this.shadowRoot.querySelectorAll('.chip').forEach(ch => ch.addEventListener('click', () => {
       const step = this._colStep(strip);
       const i = Math.min(Number(ch.dataset.day), this._cols.length - this._vis); // the last days share the final screen

@@ -46,6 +46,9 @@ browser.
     rank.
   - AFC and NFC standings by division, with seeds and win-loss records. Tap any
     team to switch to it.
+- **Picks up where you left off.** Leave the dashboard and come back, and the
+  card returns to the week, day and team page you were on. It starts fresh at
+  today in a new tab or app session, or once the date has changed.
 - **Live updates.** Refreshes every 30 seconds while a game is on (or about to
   start), and every 5 minutes otherwise.
 - **Game counts.** Each day shows how many games are on it, in gray.
