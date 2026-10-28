@@ -7,7 +7,7 @@
  * calendar day, so a late game belongs to the evening it kicks off.
  */
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const CARD_TAG = 'football-scoreboard-card';
 
 const API = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
@@ -309,18 +309,22 @@ const STYLE = `
   .empty { text-align: center; padding: 18px 4px; }
 
   /* matchup */
-  .matchup { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 6px; }
-  .team { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; min-width: 0;
+  /* one grid for both teams: each row (logo, name, record, score) is shared, so a name that wraps on one side keeps the other side level */
+  .matchup { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 6px; row-gap: 4px; align-items: start; justify-items: center; text-align: center; }
+  .matchup > .away { grid-column: 1; }
+  .matchup > .home { grid-column: 3; }
+  .matchup > .mid { grid-column: 2; }
+  .t-logo { align-self: stretch; justify-self: stretch; display: flex; justify-content: center;
     padding-top: 10px; border-top: 4px solid var(--tc, var(--divider-color)); border-radius: 2px; }
-  .team img { width: 52px; height: 52px; object-fit: contain; }
+  .t-logo img { width: 52px; height: 52px; object-fit: contain; }
+  .matchup .score { align-self: center; }
   .tname { font-size: 14px; font-weight: 600; line-height: 1.25; }
   .tname .seed { color: var(--secondary-text-color); font-weight: 500; }
   .trec { font-size: 11px; color: var(--secondary-text-color); }
   .score { font-size: 38px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
-  .team.lost .score, .team.lost .tname { opacity: .55; }
+  .lost.score, .lost.tname { opacity: .55; }
   .poss { font-size: 14px; }
-  .mid { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-    padding-top: 36px; min-width: 52px; text-align: center; }
+  .mid { min-width: 52px; display: flex; flex-direction: column; align-items: center; gap: 6px; align-self: center; }
   .vs { font-size: 12px; color: var(--secondary-text-color); }
   .status { font-size: 14px; font-weight: 600; white-space: nowrap; }
   .status.live { color: var(--error-color, #db4437); }
@@ -397,6 +401,7 @@ const STYLE = `
 
   .divs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .div { min-width: 0; }
+  .div h4 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .drow { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; padding: 4px 0;
     border-top: 1px solid var(--divider-color); }
   .drow .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -407,10 +412,10 @@ const STYLE = `
 
   /* narrow columns */
   @container (max-width: 340px) {
-    .team img { width: 44px; height: 44px; }
+    .t-logo img { width: 44px; height: 44px; }
     .tname { font-size: 13px; }
     .score { font-size: 32px; }
-    .mid { padding-top: 30px; min-width: 46px; }
+    .mid { min-width: 46px; }
     .status { font-size: 12px; }
   }
 `;
@@ -801,25 +806,25 @@ class FootballScoreboardCard extends HTMLElement {
 
   _seed(id) { return this._standings?.[id]?.seed ?? null; }
 
+  /** One team's cells in the shared matchup grid; `side` picks the column. */
   _teamHTML(t, g, side) {
     const seed = this._seed(t.id);
-    const lost = g.state === 'post' && !t.winner && (g.away.winner || g.home.winner);
+    const lost = g.state === 'post' && !t.winner && (g.away.winner || g.home.winner) ? ' lost' : '';
     const poss = g.state === 'in' && g.situation?.possession === t.id;
-    return `<div class="team${lost ? ' lost' : ''}" style="--tc:${esc(t.color ?? '')}">
-      ${t.logo ? `<button class="logo-btn" data-team="${esc(t.id)}" aria-label="${esc(t.full)} season stats" title="Season stats"><img src="${esc(t.logo)}" alt="" loading="lazy"></button>` : ''}
-      <div class="tname">${seed ? `<span class="seed">(${seed})</span> ` : ''}${esc(t.city)} ${esc(t.name)}</div>
-      <div class="trec">${esc(t.record)}${t.split ? ` · ${esc(t.split)} ${side === 'home' ? 'home' : 'away'}` : ''}</div>
-      ${g.state !== 'pre' ? `<div class="score">${esc(t.score)}</div>` : ''}
-      ${poss ? `<div class="poss" title="Possession">🏈</div>` : ''}
-    </div>`;
+    const cell = (row, cls, html, style = '') => `<div class="${side} ${cls}" style="grid-row:${row}${style}">${html}</div>`;
+    return cell(1, 't-logo', t.logo ? `<button class="logo-btn" data-team="${esc(t.id)}" aria-label="${esc(t.full)} season stats" title="Season stats"><img src="${esc(t.logo)}" alt="" loading="lazy"></button>` : '', `;--tc:${esc(t.color ?? '')}`)
+      + cell(2, `tname${lost}`, `${seed ? `<span class="seed">(${seed})</span> ` : ''}${esc(t.city)} ${esc(t.name)}`)
+      + cell(3, 'trec', `${esc(t.record)}${t.split ? ` · ${esc(t.split)} ${side === 'home' ? 'home' : 'away'}` : ''}`)
+      + (g.state !== 'pre' ? cell(4, `score${lost}`, esc(t.score)) : '')
+      + (poss ? cell(5, 'poss', '<span title="Possession">🏈</span>') : '');
   }
 
   _gameHTML(g, c) {
     const live = g.state === 'in';
     let html = `<div class="matchup">
       ${this._teamHTML(g.away, g, 'away')}
-      <div class="mid"><div class="vs">${g.neutral ? 'vs.' : 'at'}</div>
-        <div class="status${live ? ' live' : ''}">${esc(statusLabel(g))}</div></div>
+      <div class="mid vs-cell" style="grid-row:1"><div class="vs">${g.neutral ? 'vs.' : 'at'}</div>${g.state === 'pre' ? `<div class="status">${esc(statusLabel(g))}</div>` : ''}</div>
+      ${g.state === 'pre' ? '' : `<div class="mid st-cell" style="grid-row:4"><div class="status${live ? ' live' : ''}">${esc(statusLabel(g))}</div></div>`}
       ${this._teamHTML(g.home, g, 'home')}
     </div>`;
     if (live && g.situation?.text) {
