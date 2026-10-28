@@ -18,6 +18,9 @@ browser.
 - **A week per screen.** The arrows move a week back or forward with a sliding
   carousel. Within the week, swipe or scroll through the days, or tap a day
   button (S M T W T F S) to jump to it.
+- **NFL week.** The header names the week: Week 7, Preseason Week 2, Wild
+  Card, … Super Bowl. NFL weeks run Thursday to Monday, so each Sunday–Saturday
+  view is named for its Sunday games.
 - **Fits the screen.** By default the card shows as many whole days as fit
   across it, so no column is cut off. On a phone that's one day at a time. Or
   choose how many days to show (1–7).

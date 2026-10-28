@@ -116,6 +116,8 @@ function parseGame(ev) {
   const odds = comp.odds?.[0];
   return {
     id: ev.id,
+    week: ev.week?.number ?? null,
+    seasonType: ev.season?.slug ?? '',     // preseason | regular-season | post-season
     date: new Date(comp.date ?? ev.date),
     timeValid: comp.timeValid !== false,
     state: type.state ?? 'pre',           // pre | in | post
@@ -267,7 +269,10 @@ const STYLE = `
   .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; font-size: 17px; padding: 2px 6px; }
 
   /* week strip: seven day columns, as many on screen as fit (--vis), swipe or scroll through the rest */
-  .wk { font-size: 15px; font-weight: 600; color: var(--secondary-text-color); white-space: nowrap; margin-left: 4px; }
+  .wkt { display: flex; flex-direction: column; justify-content: center; min-width: 0; margin-left: 4px; line-height: 1.2; }
+  .wkn { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wk { font-size: 15px; font-weight: 600; color: var(--secondary-text-color); white-space: nowrap; }
+  .wkn + .wk { font-size: 12px; font-weight: 500; }
   .chips { display: flex; justify-content: center; gap: 4px; padding: 2px 12px 0; }
   .chip { font: inherit; display: flex; flex-direction: column; align-items: center; min-width: 36px; padding: 3px 4px;
     border-radius: 10px; border: 1px solid transparent; background: none; color: var(--primary-text-color); cursor: pointer; line-height: 1.15; }
@@ -429,6 +434,13 @@ const visFor = (width, days = 'auto') => {
   return width < SINGLE_DAY_BELOW_PX ? 1 : Math.max(1, Math.min(WEEK, fitCols(width, MIN_COL_PX)));
 };
 const weekStart = d => addDays(startOfDay(d), -d.getDay()); // Sunday
+const POSTSEASON_WEEKS = { 1: 'Wild Card', 2: 'Divisional Round', 3: 'Conference Championships', 4: 'Pro Bowl', 5: 'Super Bowl' };
+/** "Week 7", "Preseason Week 2", "Wild Card"… for a game's NFL week. */
+const weekLabel = g => {
+  if (!g?.week) return '';
+  if (g.seasonType === 'post-season') return POSTSEASON_WEEKS[g.week] ?? `Postseason Week ${g.week}`;
+  return `${g.seasonType === 'preseason' ? 'Preseason ' : ''}Week ${g.week}`;
+};
 const FOLD_KEY = 'football-scoreboard-card:folded';
 const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -628,7 +640,7 @@ class FootballScoreboardCard extends HTMLElement {
         <div class="range">${tv ? '<button class="back" id="back">‹ Back</button>' : `
           <button class="nav" id="left" aria-label="Previous week" title="Previous week">‹</button>
           <button class="nav" id="right" aria-label="Next week" title="Next week">›</button>
-          ${single ? '' : `<span class="wk">${md(this._start)} – ${md(sat)}</span>`}
+          <div class="wkt">${this._weekName ? `<span class="wkn">${esc(this._weekName)}</span>` : ''}${single ? '' : `<span class="wk">${md(this._start)} – ${md(sat)}</span>`}</div>
           ${this._showingThisWeek ? '' : `<button class="today" id="today">${single ? 'Today' : 'This week'}</button>`}`}
         </div>
         <div class="clock" id="clock">${fmtTime(new Date())}</div>
@@ -661,6 +673,15 @@ class FootballScoreboardCard extends HTMLElement {
   _todayCol() {
     const t = this._cols.findIndex(c => dayKey(c.day) === this._todayKey);
     return t < 0 ? 0 : Math.min(t, WEEK - this._vis);
+  }
+
+  /**
+   * The NFL week on screen. NFL weeks run Thursday–Monday, so a Sunday–Saturday
+   * week holds two of them; it's named for its Sunday games (else its first game).
+   */
+  get _weekName() {
+    const games = this._cols.flatMap(c => c.games);
+    return weekLabel(this._cols[0].games[0] ?? games[0]);
   }
 
   /** Width of one day column plus the gap after it (0 until the card is laid out). */
